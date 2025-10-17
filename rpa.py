@@ -40,7 +40,7 @@ cur2 = conn2.cursor()  # Cria o cursor para o banco de destino
 # =====================================================
 # Sincronização da tabela "Fábrica"
 # =====================================================
-cur1.execute("SELECT id, nome_unidade, cnpj_unidade, email_corporativo, status, descricao FROM fabrica;")
+cur1.execute("SELECT id, nome_unidade, cnpj_unidade, email_corporativo, status, ramo FROM fabrica;")
 factory_records = cur1.fetchall()  # Busca todos os registros da tabela de origem
 
 for factory_id, name, cnpj, email, status, description in factory_records:
@@ -90,17 +90,20 @@ print(f"Address: {len(address_records)} synchronized records.")
 # =====================================================
 # Sincronização da tabela "Gênero"
 # =====================================================
-cur1.execute("SELECT id, nome FROM genero;")
+cur1.execute("SELECT DISTINCT genero FROM usuario WHERE genero IS NOT NULL;")
 gender_records = cur1.fetchall()
 
-for r in gender_records:
-    # Insere ou atualiza o gênero
+gender_map = {}
+
+for i, (gender_name,) in enumerate(gender_records, start=1):
+    gender_map[gender_name] = i
+
     cur2.execute("""
         INSERT INTO gender (pk_id, name)
         VALUES (%s, %s)
         ON CONFLICT (pk_id)
         DO UPDATE SET name = EXCLUDED.name;
-    """, r)
+    """, (i, gender_name))
 
 print(f"Gender: {len(gender_records)} synchronized records.")
 
@@ -119,6 +122,8 @@ for id, name, email, password, created_at, birth_date, status, gender_id, manage
     deactivated_at = datetime.now() if status != 'Ativo' else None
     # Ajusta o campo data_criacao para UTC
     created_at = datetime.combine(created_at, datetime.min.time(), tzinfo=timezone.utc)
+    # Pega o ID da tabela de gênero com base na coluna 'gênero' no banco de origem
+    gender_id = gender_map.get(gender_name)
 
     # Insere ou atualiza o usuário no destino
     cur2.execute("""
