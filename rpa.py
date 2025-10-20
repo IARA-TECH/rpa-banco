@@ -51,7 +51,7 @@ for factory_id, name, cnpj, email, status, description in factory_records:
 
     # Insere ou atualiza os dados no banco de destino
     cur2.execute("""
-        INSERT INTO factory (pk_id, cnpj, name, domain, status, description)
+        INSERT INTO factory (pk_id, cnpj, name, domain, deactivated_at, description)
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (pk_id)
         DO UPDATE SET cnpj = EXCLUDED.cnpj,
@@ -97,6 +97,10 @@ gender_map = {}
 
 for i, (gender_name,) in enumerate(gender_records, start=1):
     gender_map[gender_name] = i
+    if gender_name == 'masc':
+        gender_name = 'Masculino'
+    else:
+        gender_name = 'Feminino'
 
     cur2.execute("""
         INSERT INTO gender (pk_id, name)
@@ -111,19 +115,20 @@ print(f"Gender: {len(gender_records)} synchronized records.")
 # Sincronização da tabela "Usuário"
 # =====================================================
 cur1.execute("""
-    SELECT id, nome, email, senha, data_criacao, data_nascimento, status,
-           fk_genero, id_gerente, fk_fabrica, tipo_acesso
+    SELECT id, nome, email, senha, data_criacao, data_nascimento, status, genero, id_gerente, fk_fabrica, tipo_acesso, desc_tipoacesso
     FROM usuario;
 """)
 user_account_records = cur1.fetchall()
 
-for id, name, email, password, created_at, birth_date, status, gender_id, manager_id, factory_id in user_account_records:
+for r in user_account_records:
     # Define a data de desativação se o status não for 'Ativo'
-    deactivated_at = datetime.now() if status != 'Ativo' else None
+    deactivated_at = datetime.now() if r[6] != 'Ativo' else None
     # Ajusta o campo data_criacao para UTC
-    created_at = datetime.combine(created_at, datetime.min.time(), tzinfo=timezone.utc)
+    created_at = datetime.combine(r[4], datetime.min.time(), tzinfo=timezone.utc)
     # Pega o ID da tabela de gênero com base na coluna 'gênero' no banco de origem
-    gender_id = gender_map.get(gender_name)
+    manager_uuid = r[8] if r[8] else None
+
+    gender_id = gender_map.get(r[7])
 
     # Insere ou atualiza o usuário no destino
     cur2.execute("""
@@ -135,12 +140,12 @@ for id, name, email, password, created_at, birth_date, status, gender_id, manage
                       email = EXCLUDED.email,
                       password = EXCLUDED.password,
                       created_at = EXCLUDED.created_at,
-                      birth_date = EXCLUDED.birth_date,
+                      date_of_birth = EXCLUDED.date_of_birth,
                       deactivated_at = EXCLUDED.deactivated_at,
                       gender_id = EXCLUDED.gender_id,
                       user_manager_uuid = EXCLUDED.user_manager_uuid,
                       factory_id = EXCLUDED.factory_id;
-    """, (id, name, email, password, created_at, birth_date, deactivated_at, gender_id, manager_id, factory_id))
+    """, (r[0], r[1], r[2], r[3], created_at, r[5], deactivated_at, gender_id, manager_uuid, r[9]))
 
 print(f"User Account: {len(user_account_records)} synchronized records.")
 
@@ -174,10 +179,11 @@ for u in user_account_records:
     if access_type in map_types:
         access_type_id = map_types[access_type]
         cur2.execute("""
-            INSERT INTO user_access_type (user_account_uuid, access_type_id)
+            INSERT INTO user_account_access_type (user_account_uuid, access_type_id)
             VALUES (%s, %s)
             ON CONFLICT (user_account_uuid, access_type_id)
-            DO UPDATE SET access_type_id = EXCLUDED.access_type_id;
+            DO UPDATE SET created_at = EXCLUDED.created_at,
+                          deactivated_at = EXCLUDED.deactivated_at;
         """, (user_uuid, access_type_id))
 
 print("User Account -> Access Type synchronized records.")
@@ -185,10 +191,16 @@ print("User Account -> Access Type synchronized records.")
 # =====================================================
 # Sincronização da tabela "Plano"
 # =====================================================
-cur1.execute("SELECT id, nome, valor, descricao, duracao FROM planos;")
+cur1.execute("SELECT id, nome, valor, descricao, duracao FROM plano;")
 registros_planos = cur1.fetchall()
 
 for r in registros_planos:
+    delta = r[4]
+    total_days = delta.days
+
+    r = list(r)  # tuplas são imutáveis
+    r[4] = total_days // 30 
+
     # Insere ou atualiza os planos de assinatura
     cur2.execute("""
         INSERT INTO subscription (pk_id, name, price, description, monthly_duration)
@@ -200,7 +212,7 @@ for r in registros_planos:
                       monthly_duration = EXCLUDED.monthly_duration;
     """, r)
 
-print(f"Plano: {len(registros_planos)} registros sincronizados.")
+print(f"Subscription: {len(registros_planos)} registros sincronizados.")
 
 # =====================================================
 # Sincronização da tabela "Método de Pagamento"
@@ -223,7 +235,7 @@ print(f"Payment Method: {len(payment_method_records)} synchronized records.")
 # Sincronização da tabela "Pagamento"
 # =====================================================
 cur1.execute("""
-    SELECT id, total, data_pagamento, data_inicio, data_vencimento, status,
+    SELECT id, valor, data_pagamento, data_inicio, data_vencimento, status,
            fk_plano, fk_usuario, fk_metodo_pagamento
     FROM pagamento;
 """)
